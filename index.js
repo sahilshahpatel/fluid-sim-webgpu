@@ -1,4 +1,5 @@
 let simulator;
+let renderer;
 
 async function init() {
     if (!navigator.gpu) {
@@ -12,7 +13,15 @@ async function init() {
     
     let device = await adapter.requestDevice();
     let canvas = document.querySelector("canvas");
-    simulator = new FluidSimulator(device, canvas);
+    this.context = canvas.getContext("webgpu");
+    this.context.configure({
+        device:    device,
+        format:    navigator.gpu.getPreferredCanvasFormat(),
+        alphaMode: "premultiplied",
+    });
+
+    simulator = new FluidSimulator(device, canvas, context);
+    renderer  = new FluidRenderer(device, canvas, context);
 }
 
 async function start (renderFunc) {

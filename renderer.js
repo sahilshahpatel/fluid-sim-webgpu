@@ -1,5 +1,7 @@
-class FluidRenderer {
-    constructor(device, canvas, settings) {
+import { defaultSettings } from "./settings.js";
+
+export default class FluidRenderer {
+    constructor(device, canvas, settings = {}) {
         this.device = device;
         this.canvas = canvas;
         this.context = canvas.getContext("webgpu");
@@ -7,12 +9,7 @@ class FluidRenderer {
         
         /* [[ Configuration parameters ]] */
         this.settings = {
-            renderResolution:  [800, 500],
-            drawArrows:        false,
-            dataTextureFormat: "rgba16float",
-            clearColor:        { r: 0.0, g: 0.5, b: 1.0, a: 1.0 },
-            
-            // Override default settings with inputs
+            ...defaultSettings,
             ...settings
         };
 

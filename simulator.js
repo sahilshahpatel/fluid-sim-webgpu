@@ -1,21 +1,15 @@
-class FluidSimulator {
-    constructor(device, canvas, context, settings) {
+import FluidRenderer from "./renderer.js";
+import MouseTracker from "./mouseTracker.js";
+import { defaultSettings } from "./settings.js";
+
+export default class FluidSimulator {
+    constructor(device, canvas, settings = {}) {
         this.device = device;
         this.canvas = canvas;
 
         /* [[ Configuration parameters ]] */
         this.settings = {
-            dataResolution:            [320, 200],
-            dyeDiffusionStrength:      0,
-            velocityDiffusionStrength: 1,
-            diffusionIterations:       25,
-            projectionIterations:      40,
-            vorticityConfinement:      5,
-            // As of now, webgpu doesn't allow filtering samplers for 32bit float textures
-            dataTextureFormat:         "rgba16float",
-            workgroupSize:             64,
-            
-            // Override default settings with inputs
+            ...defaultSettings,
             ...settings
         }
         

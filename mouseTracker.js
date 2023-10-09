@@ -1,4 +1,4 @@
-class MouseTracker {
+export default class MouseTracker {
     constructor(canvas, units, onChange) {
         this.canvas = canvas;
         this.onChange = onChange;

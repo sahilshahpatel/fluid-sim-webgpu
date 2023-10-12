@@ -17,7 +17,10 @@ export default class FluidSimulator {
         /* [[ Create required uniform buffer objects ]] */
         this.ubo = {};
         this.stagingBuffer = {};
-        this.uboByteLength = 3*2*4, // 3 vec2's of 4 byte floats
+        this.uboByteLength = 4*2*4, // 4 vec2's of 4 byte floats
+
+        // UBO size must be padded to multiple of 16
+        this.uboByteLength = Math.ceil(this.uboByteLength / 16) * 16;
 
         // In WebGPU, buffers which have the MAP_WRITE usage cannot also be uniforms.
         // Instead, we have to create a staging buffer which is MAP_WRITE and COPY_SRC
@@ -87,9 +90,10 @@ export default class FluidSimulator {
     initCompute() {
         const computeShader = `
         struct UBO {
-            resolution: vec2<f32>,
-            mousePos: vec2<f32>,
-            mouseVel: vec2<f32>,
+            resolution: vec2f,
+            lastMousePos: vec2f,
+            mousePos: vec2f,
+            mouseVel: vec2f,
         }
         @group(0) @binding(0)
         var<uniform> ubo: UBO;
@@ -103,10 +107,19 @@ export default class FluidSimulator {
         @group(0) @binding(3)
         var output: texture_storage_2d<${this.settings.dataTextureFormat}, write>;
 
+        // From https://iquilezles.org/articles/distfunctions2d/
+        fn sdSegment(p: vec2f, a: vec2f, b: vec2f) -> f32
+        {
+            var pa: vec2f = p-a;
+            var ba: vec2f = b-a;
+            var h: f32 = clamp( dot(pa,ba)/dot(ba,ba), 0.0, 1.0 );
+            return length( pa - ba*h );
+        }
+
         @compute @workgroup_size(${this.settings.workgroupSize})
         fn main(
-        @builtin(global_invocation_id)
-        global_id: vec3u,
+            @builtin(global_invocation_id)
+            global_id: vec3u,
         ) {
             // Calculate texture coordinates
             var id: u32    = global_id.x;
@@ -116,10 +129,13 @@ export default class FluidSimulator {
 
             // Paint with user interaction
             var color = vec4f(uv, 0.0, 1.0);
-            var mouseDist = distance(vec2f(xy), ubo.mousePos);
-            color.b = 1.0 - smoothstep(0, 15, mouseDist);
+            var mouseDist = sdSegment(vec2f(xy), ubo.mousePos, ubo.lastMousePos);
+            color.b = 1 - smoothstep(0, 5, mouseDist);
 
-            // var cell: vec4<f32> = textureLoad(data, );
+            // Recall previous data
+            var previous: vec4<f32> = textureLoad(data, xy, 0);
+            color.b = max(color.b, previous.b);
+
             textureStore(output, xy, color);
         }
         `;
@@ -198,14 +214,14 @@ export default class FluidSimulator {
         const commandEncoder = this.device.createCommandEncoder({ label: "Compute Command Encoder" });
 
         // Uniforms must be ready before we can submit
-        await this.setUniforms();
-
-        // Copy UBO data from staging buffer to uniform buffer
-        commandEncoder.copyBufferToBuffer(
-            this.stagingBuffer, 0,
-            this.ubo.buffer,    0,
-            this.uboByteLength,
-        );
+        if (await this.setUniforms()) {
+            // Copy UBO data from staging buffer to uniform buffer
+            commandEncoder.copyBufferToBuffer(
+                this.stagingBuffer, 0,
+                this.ubo.buffer,    0,
+                this.uboByteLength,
+            );
+        }
 
         // Start general compute pass
         const passEncoder = commandEncoder.beginComputePass();
@@ -214,23 +230,32 @@ export default class FluidSimulator {
         passEncoder.dispatchWorkgroups(Math.ceil(cellCount / this.settings.workgroupSize));
         passEncoder.end();
 
+        // Copy output data back to data texture
+        commandEncoder.copyTextureToTexture(
+            this.outputTexture,
+            this.dataTexture,
+            this.settings.dataResolution,
+        );
+
         this.device.queue.submit([commandEncoder.finish()]);
     }
 
     async setUniforms() {
-        if (this.uniformsUpdated) return;
+        if (this.uniformsUpdated) return false;
 
         await this.stagingBuffer.mapAsync(GPUMapMode.WRITE);
 
         let uboData = new Float32Array(this.stagingBuffer.getMappedRange());
         uboData.set(new Float32Array([
             ...this.settings.dataResolution,
+            ...this.mouseTracker.lastPosition,
             ...this.mouseTracker.position,
             ...this.mouseTracker.velocity,
         ]));
         this.stagingBuffer.unmap();
-        
+
         this.uniformsUpdated = true;
+        return true;
     }
 
     async update() {     

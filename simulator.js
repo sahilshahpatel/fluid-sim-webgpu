@@ -1,267 +1,243 @@
+import { device, canvas, context } from "./global.js";
+import { settings } from "./settings.js";
+import * as advection from "./advect.js"
 import FluidRenderer from "./renderer.js";
-import MouseTracker from "./mouseTracker.js";
-import { defaultSettings } from "./settings.js";
-
-export default class FluidSimulator {
-    constructor(device, canvas, settings = {}) {
-        this.device = device;
-        this.canvas = canvas;
-
-        /* [[ Configuration parameters ]] */
-        this.settings = {
-            ...defaultSettings,
-            ...settings
-        }
-        
-
-        /* [[ Create required uniform buffer objects ]] */
-        this.ubo = {};
-        this.stagingBuffer = {};
-        this.uboByteLength = 4*2*4, // 4 vec2's of 4 byte floats
-
-        // UBO size must be padded to multiple of 16
-        this.uboByteLength = Math.ceil(this.uboByteLength / 16) * 16;
-
-        // In WebGPU, buffers which have the MAP_WRITE usage cannot also be uniforms.
-        // Instead, we have to create a staging buffer which is MAP_WRITE and COPY_SRC
-        // and write to there. We can then copy over to our uniform buffer on the GPU
-        this.stagingBuffer = device.createBuffer({
-            label: "Compute UBO Staging Buffer",
-            size:  this.uboByteLength,
-            usage: GPUBufferUsage.MAP_WRITE |
-                   GPUBufferUsage.COPY_SRC,
-        });
-
-        this.ubo.buffer = device.createBuffer({
-            label: "Compute UBO",
-            size:  this.uboByteLength,
-            usage: GPUBufferUsage.UNIFORM  |
-                   GPUBufferUsage.COPY_DST,
-        });
-
-        this.uniformsUpdated = false;
 
 
-        /* [[ Create required textures and samplers ]] */
-        let createDataTexture = (label, extraUsages) => {
-            const texture = device.createTexture({
-                label:  label,
-                format: this.settings.dataTextureFormat,
-                size:   this.settings.dataResolution,
-                usage:  GPUTextureUsage.COPY_SRC | 
-                        GPUTextureUsage.COPY_DST |
-                        GPUTextureUsage.TEXTURE_BINDING |
-                        extraUsages,
-            });
+/* [[ Create required textures and samplers ]] */
+let createDataTexture = (label, extraUsages) => {
+    const texture = device.createTexture({
+        label:  label,
+        format: settings.dataTextureFormat,
+        size:   settings.dataResolution,
+        usage:  GPUTextureUsage.COPY_SRC | 
+                GPUTextureUsage.COPY_DST |
+                GPUTextureUsage.TEXTURE_BINDING |
+                extraUsages,
+    });
 
-            return {
-                texture: texture,
-                view:    texture.createView()
-            }
-        };
-        this.dataTexture   = createDataTexture("dataTexture");
-        this.outputTexture = createDataTexture("outputTexture", GPUTextureUsage.STORAGE_BINDING);
-        this.dataSampler   = device.createSampler({
-            label:        "dataSampler",
-            addressModeU: "clamp-to-edge",
-            addressModeV: "clamp-to-edge",
-            magFilter:    "linear",
-            minFilter:    "linear",
-        });
-
-
-        /* [[ Set up pipelines ]] */
-        this.pipelines = {};
-        this.initCompute();
-
-        
-        /* [[ Mouse tracking ]] */
-        this.mouseTracker = new MouseTracker(
-            canvas,
-            this.settings.dataResolution,
-            () => { this.uniformsUpdated = false },
-        );
+    return {
+        texture: texture,
+        view:    texture.createView()
+    }
+};
+const dataTexture   = createDataTexture("dataTexture");
+const outputTexture = createDataTexture(
+    "outputTexture", 
+    GPUTextureUsage.RENDER_ATTACHMENT |
+    GPUTextureUsage.STORAGE_BINDING
+);
+const dataSampler   = device.createSampler({
+    label:        "dataSampler",
+    addressModeU: "clamp-to-edge",
+    addressModeV: "clamp-to-edge",
+    magFilter:    "linear",
+    minFilter:    "linear",
+});
 
 
-        /* [[ Create renderer ]] */
-        this.renderer = new FluidRenderer(device, canvas, this.settings);
+/* [[ Set up pipelines ]] */
+advection.init();
+
+
+/* [[ Create renderer ]] */
+const renderer = new FluidRenderer(device, canvas, settings);
+
+
+/* [[ Setup animation ]] */
+async function update() {     
+    await advection.run(dataTexture, dataSampler, outputTexture);
+    await device.queue.onSubmittedWorkDone();
+    await renderer.render(outputTexture.view);
+    return device.queue.onSubmittedWorkDone();
+}
+
+export let deltaTime;
+let lastTimestamp = performance.now();
+let lastAnimationFrame;
+
+function animate(timestamp) {
+    deltaTime = timestamp - lastTimestamp;
+    update(deltaTime).then(() => {
+        lastAnimationFrame = requestAnimationFrame(animate);
+    });
+    lastTimestamp = timestamp;
+}
+
+export function start() {
+    animate(performance.now());
+}
+
+export function stop() {
+    cancelAnimationFrame(lastAnimationFrame);
+}
+
+
+function initCompute() {
+    const computeShader = `
+    struct UBO {
+        resolution: vec2f,
+        lastMousePos: vec2f,
+        mousePos: vec2f,
+        mouseVel: vec2f,
+        deltaTime: f32,
+    }
+    @group(0) @binding(0)
+    var<uniform> ubo: UBO;
+
+    @group(0) @binding(1)
+    var data: texture_2d<f32>;
+
+    @group(0) @binding(2)
+    var dataSampler: sampler;
+
+    @group(0) @binding(3)
+    var output: texture_storage_2d<${this.settings.dataTextureFormat}, write>;
+
+    // From https://iquilezles.org/articles/distfunctions2d/
+    fn sdSegment(p: vec2f, a: vec2f, b: vec2f) -> f32
+    {
+        var pa: vec2f = p-a;
+        var ba: vec2f = b-a;
+        var h: f32 = clamp( dot(pa,ba)/dot(ba,ba), 0.0, 1.0 );
+        return length( pa - ba*h );
     }
 
-    initCompute() {
-        const computeShader = `
-        struct UBO {
-            resolution: vec2f,
-            lastMousePos: vec2f,
-            mousePos: vec2f,
-            mouseVel: vec2f,
-        }
-        @group(0) @binding(0)
-        var<uniform> ubo: UBO;
+    @compute @workgroup_size(${this.settings.workgroupSize})
+    fn main(
+        @builtin(global_invocation_id)
+        global_id: vec3u,
+    ) {
+        // Calculate texture coordinates
+        var id: u32    = global_id.x;
+        var width: u32 = u32(ubo.resolution.x);
+        var xy         = vec2u(id % width, id / width);
+        var uv: vec2f  = vec2f(xy) / ubo.resolution;
 
-        @group(0) @binding(1)
-        var data: texture_2d<f32>;
+        // Paint with user interaction
+        var out = vec4f(0);
+        var mouseDist = sdSegment(vec2f(xy), ubo.mousePos, ubo.lastMousePos);
+        var affect: f32 = 1 - smoothstep(0, 5, mouseDist);
+        out.z = affect;
+        // out.xy = ubo.mouseVel * affect;
 
-        @group(0) @binding(2)
-        var dataSampler: sampler;
+        // Recall previous data
+        var previous: vec4<f32> = textureLoad(data, xy, 0);
 
-        @group(0) @binding(3)
-        var output: texture_storage_2d<${this.settings.dataTextureFormat}, write>;
+        // Advect
+        var sourceUV = (vec2f(xy) - previous.xy) / ubo.resolution;
+        // var fluid = textureSample(data, dataSampler, sourceUV);
 
-        // From https://iquilezles.org/articles/distfunctions2d/
-        fn sdSegment(p: vec2f, a: vec2f, b: vec2f) -> f32
-        {
-            var pa: vec2f = p-a;
-            var ba: vec2f = b-a;
-            var h: f32 = clamp( dot(pa,ba)/dot(ba,ba), 0.0, 1.0 );
-            return length( pa - ba*h );
-        }
+        out.z = max(out.z, previous.z);
+        // out.xy
 
-        @compute @workgroup_size(${this.settings.workgroupSize})
-        fn main(
-            @builtin(global_invocation_id)
-            global_id: vec3u,
-        ) {
-            // Calculate texture coordinates
-            var id: u32    = global_id.x;
-            var width: u32 = u32(ubo.resolution.x);
-            var xy         = vec2u(id % width, id / width);
-            var uv: vec2f  = vec2f(xy) / ubo.resolution;
-
-            // Paint with user interaction
-            var color = vec4f(uv, 0.0, 1.0);
-            var mouseDist = sdSegment(vec2f(xy), ubo.mousePos, ubo.lastMousePos);
-            color.b = 1 - smoothstep(0, 5, mouseDist);
-
-            // Recall previous data
-            var previous: vec4<f32> = textureLoad(data, xy, 0);
-            color.b = max(color.b, previous.b);
-
-            textureStore(output, xy, color);
-        }
-        `;
-
-        const shaderModule = this.device.createShaderModule({
-            code: computeShader,
-        });
-        
-        const bindGroupLayout = this.device.createBindGroupLayout({
-            entries: [
-                {
-                    binding:    0,
-                    visibility: GPUShaderStage.COMPUTE,
-                    buffer:     {},
-                },
-                {
-                    binding:    1,
-                    visibility: GPUShaderStage.COMPUTE,
-                    texture:    {
-                        sampleType: "float"
-                    },
-                },
-                {
-                    binding:    2,
-                    visibility: GPUShaderStage.COMPUTE,
-                    sampler:    { type: "filtering" },
-                },
-                {
-                    binding:        3,
-                    visibility:     GPUShaderStage.COMPUTE,
-                    storageTexture: {
-                        format: this.settings.dataTextureFormat,
-                    },
-                },
-            ],
-        });
-        
-        this.pipelines.compute = this.device.createComputePipeline({
-            label:  "Compute Pipline Descriptor",
-            layout: this.device.createPipelineLayout({
-                bindGroupLayouts: [bindGroupLayout],
-            }),
-            compute: {
-                module: shaderModule,
-                entryPoint: "main",
-            },
-        });
+        textureStore(output, xy, out);
     }
+    `;
+
+    const shaderModule = this.device.createShaderModule({
+        code: computeShader,
+    });
     
-    async compute() {
-        const bindGroup = this.device.createBindGroup({
-            layout: this.pipelines.compute.getBindGroupLayout(0),
-            entries: [
-                {
-                    binding:  0,
-                    resource: {
-                        buffer: this.ubo.buffer,
-                    },
+    const bindGroupLayout = this.device.createBindGroupLayout({
+        entries: [
+            {
+                binding:    0,
+                visibility: GPUShaderStage.COMPUTE,
+                buffer:     {},
+            },
+            {
+                binding:    1,
+                visibility: GPUShaderStage.COMPUTE,
+                texture:    {
+                    sampleType: "float"
                 },
-                {
-                    binding:  1,
-                    resource: this.dataTexture.view,
+            },
+            {
+                binding:    2,
+                visibility: GPUShaderStage.COMPUTE,
+                sampler:    { type: "filtering" },
+            },
+            {
+                binding:        3,
+                visibility:     GPUShaderStage.COMPUTE,
+                storageTexture: {
+                    format: this.settings.dataTextureFormat,
                 },
-                {
-                    binding:  2,
-                    resource: this.dataSampler,
+            },
+        ],
+    });
+    
+    this.pipelines.compute = this.device.createComputePipeline({
+        label:  "Compute Pipline Descriptor",
+        layout: this.device.createPipelineLayout({
+            bindGroupLayouts: [bindGroupLayout],
+        }),
+        compute: {
+            module: shaderModule,
+            entryPoint: "main",
+        },
+    });
+}
+
+async function compute(deltaTime) {
+    const bindGroup = this.device.createBindGroup({
+        layout: this.pipelines.compute.getBindGroupLayout(0),
+        entries: [
+            {
+                binding:  0,
+                resource: {
+                    buffer: this.ubo,
                 },
-                {
-                    binding:  3,
-                    resource: this.outputTexture.view,
-                }
-            ],
-        });
+            },
+            {
+                binding:  1,
+                resource: this.dataTexture.view,
+            },
+            {
+                binding:  2,
+                resource: this.dataSampler,
+            },
+            {
+                binding:  3,
+                resource: this.outputTexture.view,
+            }
+        ],
+    });
 
-        const cellCount      = this.settings.dataResolution[0] * this.settings.dataResolution[1];
-        const commandEncoder = this.device.createCommandEncoder({ label: "Compute Command Encoder" });
+    const cellCount      = this.settings.dataResolution[0] * this.settings.dataResolution[1];
+    const commandEncoder = this.device.createCommandEncoder({ label: "Compute Command Encoder" });
 
-        // Uniforms must be ready before we can submit
-        if (await this.setUniforms()) {
-            // Copy UBO data from staging buffer to uniform buffer
-            commandEncoder.copyBufferToBuffer(
-                this.stagingBuffer, 0,
-                this.ubo.buffer,    0,
-                this.uboByteLength,
-            );
-        }
-
-        // Start general compute pass
-        const passEncoder = commandEncoder.beginComputePass();
-        passEncoder.setPipeline(this.pipelines.compute);
-        passEncoder.setBindGroup(0, bindGroup);
-        passEncoder.dispatchWorkgroups(Math.ceil(cellCount / this.settings.workgroupSize));
-        passEncoder.end();
-
-        // Copy output data back to data texture
-        commandEncoder.copyTextureToTexture(
-            this.outputTexture,
-            this.dataTexture,
-            this.settings.dataResolution,
+    // Uniforms must be ready before we can submit
+    const uniforms = [
+        ...this.settings.dataResolution,
+        ...this.mouseTracker.lastPosition,
+        ...this.mouseTracker.position,
+        ...this.mouseTracker.velocity,
+        deltaTime,
+    ]
+    if (await this.setUniforms(uniforms)) {
+        // Copy UBO data from staging buffer to uniform buffer
+        commandEncoder.copyBufferToBuffer(
+            this.stagingBuffer, 0,
+            this.ubo,    0,
+            this.uboByteLength,
         );
-
-        this.device.queue.submit([commandEncoder.finish()]);
     }
 
-    async setUniforms() {
-        if (this.uniformsUpdated) return false;
+    // Start general compute pass
+    const passEncoder = commandEncoder.beginComputePass();
+    passEncoder.setPipeline(this.pipelines.compute);
+    passEncoder.setBindGroup(0, bindGroup);
+    passEncoder.dispatchWorkgroups(Math.ceil(cellCount / this.settings.workgroupSize));
+    passEncoder.end();
 
-        await this.stagingBuffer.mapAsync(GPUMapMode.WRITE);
+    // Copy output data back to data texture
+    commandEncoder.copyTextureToTexture(
+        this.outputTexture,
+        this.dataTexture,
+        this.settings.dataResolution,
+    );
 
-        let uboData = new Float32Array(this.stagingBuffer.getMappedRange());
-        uboData.set(new Float32Array([
-            ...this.settings.dataResolution,
-            ...this.mouseTracker.lastPosition,
-            ...this.mouseTracker.position,
-            ...this.mouseTracker.velocity,
-        ]));
-        this.stagingBuffer.unmap();
-
-        this.uniformsUpdated = true;
-        return true;
-    }
-
-    async update() {     
-        await this.compute();
-        await this.device.queue.onSubmittedWorkDone();
-        await this.renderer.render(this.outputTexture.view);
-        return this.device.queue.onSubmittedWorkDone();
-    }
+    device.queue.submit([commandEncoder.finish()]);
 }

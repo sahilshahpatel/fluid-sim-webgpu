@@ -1,4 +1,4 @@
-export const defaultSettings = {
+export const settings = {
     renderResolution:          [800, 500],
     dataResolution:            [320, 200],
     dyeDiffusionStrength:      0,
@@ -12,3 +12,6 @@ export const defaultSettings = {
     drawArrows:                false,
     clearColor:                { r: 0.0, g: 0.5, b: 1.0, a: 1.0 },
 }
+
+// TODO: support settings changes, including pipeline recompilation and flags for uniform-update-needed
+// This may end up moving to index.js since it will include many html element interactions

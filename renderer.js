@@ -1,17 +1,11 @@
-import { defaultSettings } from "./settings.js";
+import { settings } from "./settings.js";
 
 export default class FluidRenderer {
-    constructor(device, canvas, settings = {}) {
+    constructor(device, canvas) {
         this.device = device;
         this.canvas = canvas;
         this.context = canvas.getContext("webgpu");
-
-        
-        /* [[ Configuration parameters ]] */
-        this.settings = {
-            ...defaultSettings,
-            ...settings
-        };
+        this.settings = settings;
 
         /* [[ Initialize internal fields]] */
         this.requestAnimationFrameID = undefined;
@@ -122,6 +116,7 @@ export default class FluidRenderer {
         fn fragment_main(fragData: VertexOut) -> @location(0) vec4f
         {
             var color = textureSample(data, dataSampler, fragData.uv);
+            color.a = 1.0;
             return color;
         }
         `;

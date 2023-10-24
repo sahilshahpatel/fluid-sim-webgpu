@@ -4,15 +4,12 @@ import { settings } from "./settings.js";
 import mouseTracker from "./mouseTracker.js"
 
 
-// 4 vec2's of 4 byte floats + 1 float
-const uboByteLength = Math.ceil((4*2*4 + 4) / 16) * 16;
+// 1 vec2 of 4 byte floats + 1 float
+const uboByteLength = Math.ceil((2*4 + 4) / 16) * 16;
 
 const shader = `
 struct UBO {
     resolution:   vec2f,
-    lastMousePos: vec2f,
-    mousePos:     vec2f,
-    mouseVel:     vec2f,
     deltaTime:    f32,
 }
 @group(0) @binding(0)
@@ -43,49 +40,37 @@ fn vertex_main(@location(0) position: vec4f) -> VertexOut
 {
     var output: VertexOut;
     output.position = position;
-    output.uv = 0.5*position.xy + 0.5;
+    // We flip the Y axis because graphics and compute pipelines have different origins
+    // TODO: is this comment correct?
+    output.uv = 0.5*position.xy*vec2f(1, -1) + 0.5;
     return output;
 }
 
 @fragment
 fn fragment_main(fragData: VertexOut) -> @location(0) vec4f
 {
-    var out = vec4f(0);
-
     // Calculate texture coordinates
     var uv: vec2f = fragData.uv;
     var xy: vec2f = uv * ubo.resolution;
-
-    // Paint with user interaction
-    var mouseDist: f32 = sdSegment(xy, ubo.mousePos, ubo.lastMousePos);
-    var effect:    f32 = 1 - smoothstep(0, 5, mouseDist);
     
-    out.z  = effect;
-    out.x = ubo.mouseVel.x * effect;
-    out.y = ubo.mouseVel.y * effect;
+    // Load previous frame's data
+    var previous: vec4f = textureLoad(data, vec2u(xy), 0);
 
     // Advect
-    var previous: vec4f = textureLoad(data, vec2u(xy), 0);
-    var sourceUV        = (xy - previous.xy) / ubo.resolution;
-    var fluid           = textureSample(data, dataSampler, sourceUV);
+    var sourceUV = (xy - previous.yz * ubo.deltaTime) / ubo.resolution;
+    var advected = textureSample(data, dataSampler, sourceUV);
 
-    out.z += fluid.z;
-    // out.z = max(out.z, previous.z);
-
-    // // return out;
-    return vec4f(uv, 0, 1);
+    return advected;
 }`;
 
 let pipeline;
-let ubo;
+const ubo = device.createBuffer({
+    label: "Advect UBO",
+    size:  uboByteLength,
+    usage: GPUBufferUsage.UNIFORM  |
+            GPUBufferUsage.COPY_DST,
+});;
 export function init() {  
-    ubo = device.createBuffer({
-        label: "Advect UBO",
-        size:  uboByteLength,
-        usage: GPUBufferUsage.UNIFORM  |
-                GPUBufferUsage.COPY_DST,
-    });
-
     const shaderModule = device.createShaderModule({
         label: "Advect Shader Module",
         code: shader,
@@ -159,16 +144,14 @@ export async function run(inTexture, inTextureSampler, outTexture) {
 
     const commandEncoder = device.createCommandEncoder({ label: "Advect Command Encoder" });
 
-    if (mouseTracker.updated) {
-        const uniforms = new Float32Array([
-            ...settings.dataResolution,
-            ...mouseTracker.lastPosition,
-            ...mouseTracker.position,
-            ...mouseTracker.velocity,
-            deltaTime,
-        ]);
-        device.queue.writeBuffer(ubo, 0, uniforms, 0, uniforms.length);
-    }
+    const uniforms = new ArrayBuffer(uboByteLength);
+    const f32s  = new Float32Array([
+        ...settings.dataResolution,
+        deltaTime,
+    ]);
+    new Float32Array(uniforms).set(f32s, 0);
+    device.queue.writeBuffer(ubo, 0, uniforms, 0, uniforms.byteLength);
+
 
     const renderPassDescriptor = {
         colorAttachments: [{

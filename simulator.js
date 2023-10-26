@@ -62,23 +62,46 @@ async function update() {
 
 export let deltaTime;
 let lastTimestamp = performance.now();
-let lastAnimationFrame;
+let lastAnimationFrame = null;
+let stopped = false;
 
 function animate(timestamp, callback) {
     deltaTime = (timestamp - lastTimestamp) / 1e3;
+    lastTimestamp = timestamp;
+
+    // If it's been too long, start with a 0 second update
+    // to avoid inaccuracies in the simulation
+    // (this can be caused by switching tabs, not just pausing)
+    if (deltaTime > 2) {
+        deltaTime = 0;
+    }
+
     update().then(() => {
         if (callback) callback();
-        lastAnimationFrame = requestAnimationFrame((timestamp) => {
-            animate(timestamp, callback);
-        });
+        if (stopped == false){
+            lastAnimationFrame = requestAnimationFrame((timestamp) => {
+                animate(timestamp, callback);
+            });
+        }
     });
-    lastTimestamp = timestamp;
 }
 
 export function start(callback) {
-    animate(performance.now(), callback);
+    if (lastAnimationFrame != null) return;
+
+    stopped = false;
+
+    // Start with a 0 deltaTime frame to avoid jumps after pausing
+    lastTimestamp = performance.now();
+    animate(lastTimestamp, callback);
 }
 
 export function stop() {
+    // Having a stopped variable catches async cases
+    // where update is still running and changes lastAnimationFrame
+    // during the cancel process
+
+    stopped = true;
     cancelAnimationFrame(lastAnimationFrame);
+    lastAnimationFrame = null;
 }

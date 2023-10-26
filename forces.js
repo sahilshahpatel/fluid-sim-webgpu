@@ -34,7 +34,11 @@ fn sdSegment(p: vec2f, a: vec2f, b: vec2f) -> f32
 
 fn decay(d: f32) -> f32
 {
-    return 1 - smoothstep(0, 5, d);
+    // TODO: smoothstep would be faster, but cuts off too strongly
+    // I could probably tune it to be better though
+    
+    // return 1 - smoothstep(0, 5, d);
+    return exp(-d / 1.5);
 }
 
 fn all(b: vec2<bool>) -> bool

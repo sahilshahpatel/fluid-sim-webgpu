@@ -1,4 +1,4 @@
-import { device, fullscreenQuad } from "./global.js";
+import { device } from "./global.js";
 import { deltaTime } from "./simulator.js";
 import { settings } from "./settings.js";
 import mouseTracker from "./mouseTracker.js"
@@ -24,12 +24,22 @@ var data: texture_2d<f32>;
 var output: texture_storage_2d<${settings.dataTextureFormat}, write>;
 
 // From https://iquilezles.org/articles/distfunctions2d/
-fn sdSegment(p: vec2f, a: vec2f, b: vec2f) -> vec2f
+fn sdSegment(p: vec2f, a: vec2f, b: vec2f) -> f32
 {
     var pa: vec2f = p-a;
     var ba: vec2f = b-a;
     var h:  f32 = clamp( dot(pa,ba)/dot(ba,ba), 0.0, 1.0 );
-    return pa - ba*h;
+    return length(pa - ba*h);
+}
+
+fn decay(d: f32) -> f32
+{
+    return 1 - smoothstep(0, 5, d);
+}
+
+fn all(b: vec2<bool>) -> bool
+{
+    return b.x && b.y;
 }
 
 @compute @workgroup_size(${settings.workgroupSize})
@@ -49,11 +59,19 @@ fn main(
     // Paint with user interaction
     var out       = previous;
     var mouseDist = sdSegment(vec2f(xy), ubo.mousePos, ubo.lastMousePos);
-    var decay     = 1 - smoothstep(0, 50, dot(mouseDist, mouseDist));
 
-    out.x += decay * ubo.deltaTime * 50;
-    out.y += decay * ubo.deltaTime * ubo.mouseVel.x;
-    out.z += decay * ubo.deltaTime * ubo.mouseVel.y;
+    out.x += decay(mouseDist) * ubo.deltaTime * 50;
+    out.y += decay(mouseDist) * ubo.deltaTime * ubo.mouseVel.x;
+    out.z += decay(mouseDist) * ubo.deltaTime * ubo.mouseVel.y;
+
+    // By using sdSegment, each segment will double count lastMousePos,
+    // so we need to remove that first. But if this is the first mouse
+    // press, then lastMousePos == mousePos and we didn't double count yet
+    if (all(ubo.lastMousePos != ubo.mousePos))
+    {
+        var lastMouseDist = length(vec2f(xy) - ubo.lastMousePos);
+        out.x -= decay(lastMouseDist) * ubo.deltaTime * 50;
+    }
 
     textureStore(output, xy, out);
 }

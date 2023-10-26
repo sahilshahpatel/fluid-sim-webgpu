@@ -21,7 +21,7 @@ context.configure({
 
 
 /* [[ Fullscreen quad VAO ]] */
-export let fullscreenQuad = {};
+export const fullscreenQuad = {};
 fullscreenQuad.vertices = new Float32Array([
     -1, -1, 0, 1,
     -1, +1, 0, 1,

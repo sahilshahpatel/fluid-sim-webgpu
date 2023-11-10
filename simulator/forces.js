@@ -1,7 +1,7 @@
 import { device } from "./global.js";
 import { deltaTime } from "./simulator.js";
 import { settings } from "./settings.js";
-import mouseTracker from "./mouseTracker.js"
+import mouseTracker from "../mouseTracker.js"
 
 // 4 vec2's of 4 byte floats + 1 float
 const uboByteLength = Math.ceil((4*2*4 + 4) / 16) * 16;

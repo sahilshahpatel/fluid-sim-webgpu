@@ -1,4 +1,4 @@
-import * as simulator from './simulator.js';
+import * as simulator from './simulator/simulator.js';
 
 // TODO: add button controls here
 const fps = document.getElementById("fps");

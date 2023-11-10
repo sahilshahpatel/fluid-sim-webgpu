@@ -1,7 +1,7 @@
 import { device, context, fullscreenQuad } from "./global.js";
 import { deltaTime } from "./simulator.js";
 import { settings } from "./settings.js";
-import mouseTracker from "./mouseTracker.js"
+import mouseTracker from "../mouseTracker.js"
 
 
 // 1 vec2 of 4 byte floats + 1 float

@@ -1,5 +1,5 @@
-import { canvas } from "./global.js";
-import { settings } from "./settings.js";
+import { canvas } from "./simulator/global.js";
+import { settings } from "./simulator/settings.js";
 
 // TODO: I currently don't use mouseUpdated because I only have one UBO
 // per shader and it holds deltaTime which changes every frame.

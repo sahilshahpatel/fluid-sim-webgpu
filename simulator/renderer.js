@@ -1,204 +1,150 @@
+import { device, canvas, context, fullscreenQuad } from "./global.js"
 import { settings } from "./settings.js";
 import shaders from "./shaders.js";
 
-export default class FluidRenderer {
-    constructor(device, canvas) {
-        this.device = device;
-        this.canvas = canvas;
-        this.context = canvas.getContext("webgpu");
-        this.settings = settings;
 
-        /* [[ Initialize internal fields]] */
-        this.requestAnimationFrameID = undefined;
-        this.previousTime            = 0;
-        this.deltaTime               = 0;
-        [this.canvas.width, this.canvas.height] = this.settings.renderResolution;
-        
+/* [[ Create required uniform buffer objects ]] */
+const uboByteLength = 2*2*4; // 2 vec2 of 4 byte floats
 
-        /* [[ Fullscreen quad vertex atribute object (VAO) ]] */
-        this.fullscreenQuad = {};
-        this.fullscreenQuad.vertices = new Float32Array([
-            -1, -1, 0, 1,
-            -1, +1, 0, 1,
-            +1, -1, 0, 1,
-            +1, +1, 0, 1,
-        ]);
-        this.fullscreenQuad.count    = 4;
-        this.fullscreenQuad.topology = "triangle-strip";
+// In WebGPU, buffers which have the MAP_WRITE usage cannot also be uniforms.
+// Instead, we have to create a staging buffer which is MAP_WRITE and COPY_SRC
+// and write to there. We can then copy over to our uniform buffer on the GPU
+const stagingBuffer = device.createBuffer({
+    label: "Render UBO Staging Buffer",
+    size:  uboByteLength,
+    usage: GPUBufferUsage.MAP_WRITE |
+    GPUBufferUsage.COPY_SRC,
+});
+
+const ubo = device.createBuffer({
+    label: "Render UBO",
+    size:  uboByteLength,
+    usage: GPUBufferUsage.UNIFORM  |
+    GPUBufferUsage.COPY_DST,
+});
+
+
+/* [[ Create required textures and samplers ]] */
+// Data texture will be render function input
+const dataSampler   = device.createSampler({
+    label:        "dataSampler",
+    addressModeU: "clamp-to-edge",
+    addressModeV: "clamp-to-edge",
+    magFilter:    "linear",
+    minFilter:    "linear",
+});
+
+
+/* [[ Prepare for pipeline setup ]] */
+let pipeline;
+
+export function init() {
+    [canvas.width, canvas.height] = settings.renderResolution;
     
-        this.fullscreenQuad.buffer = device.createBuffer({
-            size:  this.fullscreenQuad.vertices.byteLength, // make it big enough to store vertices in
-            usage: GPUBufferUsage.VERTEX |
-                   GPUBufferUsage.COPY_DST,
-        });
-        device.queue.writeBuffer(this.fullscreenQuad.buffer, 0, this.fullscreenQuad.vertices, 0, this.fullscreenQuad.vertices.length);
+    const shaderModule = device.createShaderModule({
+        code: shaders.render,
+    });
     
-        this.fullscreenQuad.descriptor = {
-            attributes: [{
-                shaderLocation: 0, // position
-                offset:         0,
-                format:         "float32x4",
+    const bindGroupLayout = device.createBindGroupLayout({
+        entries: [
+            {
+                binding:    0,
+                visibility: GPUShaderStage.FRAGMENT,
+                buffer:     {},
+            },
+            {
+                binding:    1,
+                visibility: GPUShaderStage.FRAGMENT,
+                texture:    {
+                    sampleType: "float"
+                },
+            },
+            {
+                binding:    2,
+                visibility: GPUShaderStage.FRAGMENT,
+                sampler:    { type: "filtering" },
+            },
+        ],
+    });
+    
+    const pipelineDescriptor = {
+        label:  "Render Pipeline Descriptor",
+        layout: device.createPipelineLayout({
+            bindGroupLayouts: [bindGroupLayout],
+        }),
+        vertex: {
+            module: shaderModule,
+            entryPoint: "vertex_main",
+            buffers: [fullscreenQuad.descriptor],
+        },
+        fragment: {
+            module: shaderModule,
+            entryPoint: "fragment_main",
+            targets: [{
+                format: navigator.gpu.getPreferredCanvasFormat(),
             }],
-            arrayStride: this.fullscreenQuad.vertices.length / this.fullscreenQuad.count * 4,
-            stepMode:    "vertex",
-        };
+        },
+        primitive: {
+            topology: fullscreenQuad.topology,
+        },
+    };
+    
+    pipeline = device.createRenderPipeline(pipelineDescriptor);
+}
 
-
-        /* [[ Create required uniform buffer objects ]] */
-        this.ubo = {};
-        this.stagingBuffer = {};
-        this.uboByteLength = 2*2*4, // 2 vec2 of 4 byte floats
-
-        // In WebGPU, buffers which have the MAP_WRITE usage cannot also be uniforms.
-        // Instead, we have to create a staging buffer which is MAP_WRITE and COPY_SRC
-        // and write to there. We can then copy over to our uniform buffer on the GPU
-        this.stagingBuffer = device.createBuffer({
-            label: "Render UBO Staging Buffer",
-            size:  this.uboByteLength,
-            usage: GPUBufferUsage.MAP_WRITE |
-                   GPUBufferUsage.COPY_SRC,
-        });
-
-        this.ubo.buffer = device.createBuffer({
-            label: "Render UBO",
-            size:  this.uboByteLength,
-            usage: GPUBufferUsage.UNIFORM  |
-                   GPUBufferUsage.COPY_DST,
-        });
-
-        this.uniformsUpdated = false;
-
-        /* [[ Create required textures and samplers ]] */
-        // Data texture will be render function input
-        this.dataSampler   = device.createSampler({
-            label:        "dataSampler",
-            addressModeU: "clamp-to-edge",
-            addressModeV: "clamp-to-edge",
-            magFilter:    "linear",
-            minFilter:    "linear",
-        });
-
-
-        /* [[ Set up pipelines ]] */
-        this.pipelines = {};
-        this.initRender();
-    }
-
-    initRender() {     
-        const shaderModule = this.device.createShaderModule({
-            code: shaders.render,
-        });
-        
-        const bindGroupLayout = this.device.createBindGroupLayout({
-            entries: [
-                {
-                    binding:    0,
-                    visibility: GPUShaderStage.FRAGMENT,
-                    buffer:     {},
+export async function run(textureView) {
+    const bindGroup = device.createBindGroup({
+        layout: pipeline.getBindGroupLayout(0),
+        entries: [
+            {
+                binding:  0,
+                resource: {
+                    buffer: ubo,
                 },
-                {
-                    binding:    1,
-                    visibility: GPUShaderStage.FRAGMENT,
-                    texture:    {
-                        sampleType: "float"
-                    },
-                },
-                {
-                    binding:    2,
-                    visibility: GPUShaderStage.FRAGMENT,
-                    sampler:    { type: "filtering" },
-                },
-            ],
-        });
-        
-        const pipelineDescriptor = {
-            label:  "Render Pipeline Descriptor",
-            layout: this.device.createPipelineLayout({
-                bindGroupLayouts: [bindGroupLayout],
-            }),
-            vertex: {
-                module: shaderModule,
-                entryPoint: "vertex_main",
-                buffers: [this.fullscreenQuad.descriptor],
             },
-            fragment: {
-                module: shaderModule,
-                entryPoint: "fragment_main",
-                targets: [{
-                    format: navigator.gpu.getPreferredCanvasFormat(),
-                }],
+            {
+                binding:  1,
+                resource: textureView,
             },
-            primitive: {
-                topology: this.fullscreenQuad.topology,
+            {
+                binding:  2,
+                resource: dataSampler,
             },
-        };
-        
-        this.pipelines.render = this.device.createRenderPipeline(pipelineDescriptor);
-    }
+        ],
+    });
 
-    async render(textureView, uniformData) {
-        const bindGroup = this.device.createBindGroup({
-            layout: this.pipelines.render.getBindGroupLayout(0),
-            entries: [
-                {
-                    binding:  0,
-                    resource: {
-                        buffer: this.ubo.buffer,
-                    },
-                },
-                {
-                    binding:  1,
-                    resource: textureView,
-                },
-                {
-                    binding:  2,
-                    resource: this.dataSampler,
-                },
-            ],
-        });
+    const commandEncoder = device.createCommandEncoder({ label: "Render Command Encoder" });
+    
+    const uniforms = new ArrayBuffer(uboByteLength);
+    const f32s  = new Float32Array([
+        ...settings.renderResolution,
+        ...settings.dataResolution,
+    ]);
+    new Float32Array(uniforms).set(f32s, 0);
+    device.queue.writeBuffer(ubo, 0, uniforms, 0, uniforms.byteLength);
 
-        const commandEncoder = this.device.createCommandEncoder({ label: "Render Command Encoder" });
-        
-        // Uniforms must be ready before we can submit
-        if (uniformData !== undefined) {
-            await this.setUniforms(uniformData);
-        }
+    // Copy UBO data from staging buffer to uniform buffer
+    commandEncoder.copyBufferToBuffer(
+        stagingBuffer, 0,
+        ubo,           0,
+        uboByteLength,
+    );
 
-        // Copy UBO data from staging buffer to uniform buffer
-        commandEncoder.copyBufferToBuffer(
-            this.stagingBuffer, 0,
-            this.ubo.buffer,    0,
-            this.uboByteLength,
-        );
+    const renderPassDescriptor = {
+        colorAttachments: [{
+            clearValue: settings.clearColor,
+            loadOp: "clear",
+            storeOp: "store",
+            view: context.getCurrentTexture().createView(),
+        }],
+    };
+    
+    const passEncoder = commandEncoder.beginRenderPass(renderPassDescriptor);
+    passEncoder.setPipeline(pipeline);
+    passEncoder.setBindGroup(0, bindGroup);
+    passEncoder.setVertexBuffer(0, fullscreenQuad.buffer);
+    passEncoder.draw(fullscreenQuad.count);
+    passEncoder.end();
 
-        const renderPassDescriptor = {
-            colorAttachments: [{
-                clearValue: this.settings.clearColor,
-                loadOp: "clear",
-                storeOp: "store",
-                view: this.context.getCurrentTexture().createView(),
-            }],
-        };
-        
-        const passEncoder = commandEncoder.beginRenderPass(renderPassDescriptor);
-        passEncoder.setPipeline(this.pipelines.render);
-        passEncoder.setBindGroup(0, bindGroup);
-        passEncoder.setVertexBuffer(0, this.fullscreenQuad.buffer);
-        passEncoder.draw(this.fullscreenQuad.count);
-        passEncoder.end();
-
-        this.device.queue.submit([commandEncoder.finish()]);
-    }
-
-    async setUniforms(uniformData) {
-        await this.stagingBuffer.mapAsync(GPUMapMode.WRITE);
-
-        let uboData = new Float32Array(this.stagingBuffer.getMappedRange());
-        uboData.set(new Float32Array([
-            ...this.settings.renderResolution,
-            ...this.settings.dataResolution,
-            ...uniformData.flat(),
-        ].slice(0, this.uboByteLength / 4)));
-        this.stagingBuffer.unmap();
-    }
+    device.queue.submit([commandEncoder.finish()]);
 }

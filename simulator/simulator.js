@@ -3,7 +3,7 @@ import { settings } from "./settings.js";
 
 import * as advection from "./advect.js"
 import * as forces    from "./forces.js";
-import FluidRenderer  from "./renderer.js";
+import * as renderer  from "./renderer.js";
 
 
 /* [[ Create required textures and samplers ]] */
@@ -41,11 +41,7 @@ const dataSampler   = device.createSampler({
 /* [[ Set up pipelines ]] */
 advection.init();
 forces.init();
-
-
-/* [[ Create renderer ]] */
-const renderer = new FluidRenderer(device, canvas, settings);
-
+renderer.init();
 
 //////////////////////////////////////////////////////////////////////////
 
@@ -56,7 +52,7 @@ async function update() {
     forces.run(dataTexture, outputTexture);
     await device.queue.onSubmittedWorkDone();
     
-    await renderer.render(outputTexture.view);
+    await renderer.run(outputTexture.view);
     return device.queue.onSubmittedWorkDone();
 }
 

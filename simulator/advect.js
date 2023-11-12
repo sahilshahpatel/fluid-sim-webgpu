@@ -3,6 +3,7 @@ import { deltaTime } from "./simulator.js";
 import { settings } from "./settings.js";
 import shaders from "./shaders.js";
 
+
 // 1 vec2 of 4 byte floats + 1 float
 const uboByteLength = Math.ceil((2*4 + 4) / 16) * 16;
 

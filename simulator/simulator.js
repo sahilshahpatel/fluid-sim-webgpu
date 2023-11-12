@@ -1,4 +1,4 @@
-import { device, canvas, context } from "./global.js";
+import { device, canvas} from "./global.js";
 import { settings } from "./settings.js";
 
 import * as advection from "./advect.js"

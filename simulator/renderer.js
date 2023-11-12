@@ -1,4 +1,5 @@
 import { settings } from "./settings.js";
+import shaders from "./shaders.js";
 
 export default class FluidRenderer {
     constructor(device, canvas) {
@@ -83,46 +84,9 @@ export default class FluidRenderer {
         this.initRender();
     }
 
-    initRender() {
-        const renderShader = `
-        struct UBO {
-            renderResolution: vec2f,
-            dataResolution:   vec2f,
-        }
-        @group(0) @binding(0)
-        var<uniform> ubo: UBO;
-        
-        @group(0) @binding(1)
-        var data: texture_2d<f32>;
-        
-        @group(0) @binding(2)
-        var dataSampler: sampler;
-
-        struct VertexOut {
-            @builtin(position) position : vec4f,
-            @location(0) uv: vec2f
-        }
-        
-        @vertex
-        fn vertex_main(@location(0) position: vec4f) -> VertexOut
-        {
-            var output: VertexOut;
-            output.position = position;
-            output.uv = 0.5*position.xy + 0.5;
-            return output;
-        }
-        
-        @fragment
-        fn fragment_main(fragData: VertexOut) -> @location(0) vec4f
-        {
-            var color = textureSample(data, dataSampler, fragData.uv);
-            color.a = 1.0;
-            return color;
-        }
-        `;
-        
+    initRender() {     
         const shaderModule = this.device.createShaderModule({
-            code: renderShader,
+            code: shaders.render,
         });
         
         const bindGroupLayout = this.device.createBindGroupLayout({

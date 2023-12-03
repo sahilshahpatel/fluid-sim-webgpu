@@ -1,7 +1,8 @@
-import { device, canvas} from "./global.js";
+import { device } from "./global.js";
 import { settings } from "./settings.js";
 
-import * as advection from "./advect.js"
+import * as advection from "./advect.js";
+import * as diffusion from "./diffusion.js";
 import * as forces    from "./forces.js";
 import * as renderer  from "./renderer.js";
 
@@ -12,7 +13,7 @@ let createDataTexture = (label, extraUsages) => {
         label:  label,
         format: settings.dataTextureFormat,
         size:   settings.dataResolution,
-        usage:  GPUTextureUsage.COPY_SRC | 
+        usage:  GPUTextureUsage.COPY_SRC |
                 GPUTextureUsage.COPY_DST |
                 GPUTextureUsage.TEXTURE_BINDING |
                 extraUsages,
@@ -24,8 +25,12 @@ let createDataTexture = (label, extraUsages) => {
     }
 };
 const dataTexture   = createDataTexture("dataTexture");
+// TODO: If we are going to have individual functions copy back
+// from output to input, then we should export outputTexture from
+// global.js and have the functions not have separate in vs. out
+// parameters because the current method is confusing
 const outputTexture = createDataTexture(
-    "outputTexture", 
+    "outputTexture",
     GPUTextureUsage.RENDER_ATTACHMENT |
     GPUTextureUsage.STORAGE_BINDING
 );
@@ -40,18 +45,22 @@ const dataSampler   = device.createSampler({
 
 /* [[ Set up pipelines ]] */
 advection.init();
+diffusion.init();
 forces.init();
 renderer.init();
 
 //////////////////////////////////////////////////////////////////////////
 
-async function update() {   
+async function update() {
     advection.run(dataTexture, dataSampler, outputTexture);
     await device.queue.onSubmittedWorkDone();
-    
+
+    diffusion.run(dataTexture, outputTexture);
+    await device.queue.onSubmittedWorkDone();
+
     forces.run(dataTexture, outputTexture);
     await device.queue.onSubmittedWorkDone();
-    
+
     await renderer.run(outputTexture.view);
     return device.queue.onSubmittedWorkDone();
 }

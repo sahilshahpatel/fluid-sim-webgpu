@@ -1,10 +1,11 @@
 import { device, canvas, context, fullscreenQuad } from "./global.js"
 import { settings } from "./settings.js";
+import { padBuffer } from "./util.js";
 import shaders from "./shaders.js";
 
 
 /* [[ Create required uniform buffer objects ]] */
-const uboByteLength = 2*2*4; // 2 vec2 of 4 byte floats
+const uboByteLength = padBuffer(2*2*4); // 2 vec2 of 4 byte floats
 
 // In WebGPU, buffers which have the MAP_WRITE usage cannot also be uniforms.
 // Instead, we have to create a staging buffer which is MAP_WRITE and COPY_SRC

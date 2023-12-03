@@ -1,8 +1,8 @@
 export const settings = {
     renderResolution:          [800, 500],
     dataResolution:            [320, 200],
-    dyeDiffusionStrength:      0,
-    velocityDiffusionStrength: 1,
+    dyeDiffusionStrength:      0.05,
+    velocityDiffusionStrength: 0.05,
     diffusionIterations:       25,
     projectionIterations:      40,
     vorticityConfinement:      5,

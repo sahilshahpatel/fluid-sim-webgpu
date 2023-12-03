@@ -7,21 +7,11 @@ import shaders from "./shaders.js";
 /* [[ Create required uniform buffer objects ]] */
 const uboByteLength = padBuffer(2*2*4); // 2 vec2 of 4 byte floats
 
-// In WebGPU, buffers which have the MAP_WRITE usage cannot also be uniforms.
-// Instead, we have to create a staging buffer which is MAP_WRITE and COPY_SRC
-// and write to there. We can then copy over to our uniform buffer on the GPU
-const stagingBuffer = device.createBuffer({
-    label: "Render UBO Staging Buffer",
-    size:  uboByteLength,
-    usage: GPUBufferUsage.MAP_WRITE |
-    GPUBufferUsage.COPY_SRC,
-});
-
 const ubo = device.createBuffer({
     label: "Render UBO",
     size:  uboByteLength,
-    usage: GPUBufferUsage.UNIFORM  |
-    GPUBufferUsage.COPY_DST,
+    usage: GPUBufferUsage.UNIFORM |
+           GPUBufferUsage.COPY_DST,
 });
 
 
@@ -41,11 +31,11 @@ let pipeline;
 
 export function init() {
     [canvas.width, canvas.height] = settings.renderResolution;
-    
+
     const shaderModule = device.createShaderModule({
         code: shaders.render,
     });
-    
+
     const bindGroupLayout = device.createBindGroupLayout({
         entries: [
             {
@@ -67,7 +57,7 @@ export function init() {
             },
         ],
     });
-    
+
     const pipelineDescriptor = {
         label:  "Render Pipeline Descriptor",
         layout: device.createPipelineLayout({
@@ -89,7 +79,7 @@ export function init() {
             topology: fullscreenQuad.topology,
         },
     };
-    
+
     pipeline = device.createRenderPipeline(pipelineDescriptor);
 }
 
@@ -115,7 +105,7 @@ export async function run(textureView) {
     });
 
     const commandEncoder = device.createCommandEncoder({ label: "Render Command Encoder" });
-    
+
     const uniforms = new ArrayBuffer(uboByteLength);
     const f32s  = new Float32Array([
         ...settings.renderResolution,
@@ -123,13 +113,6 @@ export async function run(textureView) {
     ]);
     new Float32Array(uniforms).set(f32s, 0);
     device.queue.writeBuffer(ubo, 0, uniforms, 0, uniforms.byteLength);
-
-    // Copy UBO data from staging buffer to uniform buffer
-    commandEncoder.copyBufferToBuffer(
-        stagingBuffer, 0,
-        ubo,           0,
-        uboByteLength,
-    );
 
     const renderPassDescriptor = {
         colorAttachments: [{
@@ -139,7 +122,7 @@ export async function run(textureView) {
             view: context.getCurrentTexture().createView(),
         }],
     };
-    
+
     const passEncoder = commandEncoder.beginRenderPass(renderPassDescriptor);
     passEncoder.setPipeline(pipeline);
     passEncoder.setBindGroup(0, bindGroup);

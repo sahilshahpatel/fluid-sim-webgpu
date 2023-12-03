@@ -1,6 +1,7 @@
 import { device } from "./global.js";
 import { settings } from "./settings.js";
 
+import * as boundary from "./boundary.js"
 import * as advection from "./advect.js";
 import * as diffusion from "./diffusion.js";
 import * as forces    from "./forces.js";
@@ -47,6 +48,7 @@ const dataSampler   = device.createSampler({
 advection.init();
 diffusion.init();
 forces.init();
+boundary.init();
 renderer.init();
 
 //////////////////////////////////////////////////////////////////////////
@@ -59,6 +61,9 @@ async function update() {
     await device.queue.onSubmittedWorkDone();
 
     forces.run(dataTexture, outputTexture);
+    await device.queue.onSubmittedWorkDone();
+
+    boundary.run(dataTexture, outputTexture);
     await device.queue.onSubmittedWorkDone();
 
     await renderer.run(outputTexture.view);

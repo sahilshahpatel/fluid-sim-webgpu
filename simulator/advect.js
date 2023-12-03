@@ -12,15 +12,15 @@ let pipeline;
 const ubo = device.createBuffer({
     label: "Advect UBO",
     size:  uboByteLength,
-    usage: GPUBufferUsage.UNIFORM  |
-            GPUBufferUsage.COPY_DST,
+    usage: GPUBufferUsage.UNIFORM |
+           GPUBufferUsage.COPY_DST,
 });;
-export function init() {  
+export function init() {
     const shaderModule = device.createShaderModule({
         label: "Advect Shader Module",
         code: shaders.advect,
     });
-    
+
     const bindGroupLayout = device.createBindGroupLayout({
         entries: [
             {
@@ -42,7 +42,7 @@ export function init() {
             },
         ],
     });
-    
+
     pipeline = device.createRenderPipeline({
         label:  "Advect Pipeline Descriptor",
         layout: device.createPipelineLayout({

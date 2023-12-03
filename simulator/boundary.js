@@ -1,15 +1,14 @@
 import { device } from "./global.js";
-import { deltaTime } from "./simulator.js";
 import { settings } from "./settings.js";
 import { padBuffer } from "./util.js";
 import shaders from "./shaders.js";
 
 
 /* [[ Create UBO ]] */
-// 1 vec2f + 1 vec4f + 1 f32
-const uboByteLength = padBuffer(2*4 + 4*4 + 4);
+// 1 vec2f
+const uboByteLength = padBuffer(2*4);
 const ubo = device.createBuffer({
-    label: "Jacobi UBO",
+    label: "Boundary UBO",
     size:  uboByteLength,
     usage: GPUBufferUsage.UNIFORM |
            GPUBufferUsage.COPY_DST,
@@ -21,7 +20,7 @@ let pipeline;
 
 export function init() {
     const shaderModule = device.createShaderModule({
-        code: shaders.jacobi,
+        code: shaders.boundary,
     });
 
     const bindGroupLayout = device.createBindGroupLayout({
@@ -49,7 +48,7 @@ export function init() {
     });
 
     pipeline = device.createComputePipeline({
-        label:  "Jacobi Pipline Descriptor",
+        label:  "Boundary Pipline Descriptor",
         layout: device.createPipelineLayout({
             bindGroupLayouts: [bindGroupLayout],
         }),
@@ -60,7 +59,7 @@ export function init() {
     });
 }
 
-export async function run(inTexture, outTexture, diffusionStrength) {
+export async function run(inTexture, outTexture) {
     const bindGroup = device.createBindGroup({
         layout: pipeline.getBindGroupLayout(0),
         entries: [
@@ -81,13 +80,11 @@ export async function run(inTexture, outTexture, diffusionStrength) {
         ],
     });
 
-    const commandEncoder = device.createCommandEncoder({ label: "Jacobi Command Encoder" });
+    const commandEncoder = device.createCommandEncoder({ label: "Boundary Command Encoder" });
 
     const uniforms = new ArrayBuffer(uboByteLength);
     const f32s  = new Float32Array([
-        ...diffusionStrength,
         ...settings.dataResolution,
-        deltaTime,
     ]);
     new Float32Array(uniforms).set(f32s, 0);
     device.queue.writeBuffer(ubo, 0, uniforms, 0, uniforms.byteLength);

@@ -204,6 +204,88 @@ fn main(
 `},
 
 
+// Boundary ///////////////////////////////////////////////
+get boundary() { return /* wgsl */`
+struct UBO {
+    resolution: vec2f,
+}
+@group(0) @binding(0)
+var<uniform> ubo: UBO;
+
+@group(0) @binding(1)
+var data: texture_2d<f32>;
+
+@group(0) @binding(2)
+var output: texture_storage_2d<${settings.dataTextureFormat}, write>;
+
+fn all(b: vec2<bool>) -> bool
+{
+    return b.x && b.y;
+}
+
+@compute @workgroup_size(${settings.workgroupSize})
+fn main(
+    @builtin(global_invocation_id)
+    global_id: vec3u,
+) {
+    // Calculate texture coordinates
+    var id: u32    = global_id.x;
+
+    if (f32(id) > ubo.resolution.x * ubo.resolution.y) {
+        // This is an extra run outside of our bounds
+        // This can happen if the workgroup size isn't
+        // an exact factor of the resolution
+        return;
+    }
+
+    var width = u32(ubo.resolution.x);
+    var xy    = vec2u(id % width, id / width);
+    var uv    = vec2f(xy) / ubo.resolution;
+
+    // Recall previous data
+    var previous: vec4f = textureLoad(data, xy, 0);
+    var out = previous;
+
+    var north: vec2f = textureLoad(data, xy + vec2u(0, 1), 0).yz;
+    var east:  vec2f = textureLoad(data, xy + vec2u(1, 0), 0).yz;
+    var south: vec2f = textureLoad(data, xy - vec2u(0, 1), 0).yz;
+    var west:  vec2f = textureLoad(data, xy - vec2u(1, 0), 0).yz;
+
+    var extent = vec2u(ubo.resolution) - vec2u(1, 1);
+    var vel: vec2f;
+
+    // For boundary cells, enforce rules
+    if (all(xy == vec2u(0, 0))) {
+        vel = -1 * (north + east) / 2;
+    }
+    else if (all(xy == vec2u(0, extent.y))) {
+        vel = -1 * (south + east) / 2;
+    }
+    else if (all(xy == vec2u(extent.x, 0))) {
+        vel = -1 * (north + west) / 2;
+    }
+    else if (all(xy == extent)) {
+        vel = -1 * (south + west) / 2;
+    }
+    else if (xy.x == 0) {
+        vel = -1 * east;
+    }
+    else if (xy.y == 0) {
+        vel = -1 * north;
+    }
+    else if (xy.x == extent.x) {
+        vel = -1 * west;
+    }
+    else if (xy.y == extent.y) {
+        vel = -1 * south;
+    }
+
+    out = vec4f(out.x, vel.x, vel.y, out.w);
+    textureStore(output, xy, out);
+}
+`},
+
+
 // Render /////////////////////////////////////////////////
 get render() { return /* wgsl */`
 struct UBO {

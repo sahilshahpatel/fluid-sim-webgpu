@@ -13,15 +13,15 @@ let pipeline;
 const ubo = device.createBuffer({
     label: "Forces UBO",
     size:  uboByteLength,
-    usage: GPUBufferUsage.UNIFORM  |
-            GPUBufferUsage.COPY_DST,
+    usage: GPUBufferUsage.UNIFORM |
+           GPUBufferUsage.COPY_DST,
 });
 
 export function init() {
     const shaderModule = device.createShaderModule({
         code: shaders.forces,
     });
-    
+
     const bindGroupLayout = device.createBindGroupLayout({
         entries: [
             {
@@ -45,7 +45,7 @@ export function init() {
             },
         ],
     });
-    
+
     pipeline = device.createComputePipeline({
         label:  "Forces Pipline Descriptor",
         layout: device.createPipelineLayout({
